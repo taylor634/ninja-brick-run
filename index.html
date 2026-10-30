@@ -32,6 +32,23 @@ let state = 'menu', sel = 0;
 let keys = {}, t = 0, cam = 0, nextX = 0, lastMile = 0;
 let p, platforms, items, parts, texts, score;
 
+// quiz settings (saved in the browser)
+let cfg = { count: true, add: true, letters: true, level: 0 };
+try { Object.assign(cfg, JSON.parse(localStorage.getItem('nbr_cfg') || '{}')); } catch (e) {}
+function saveCfg() { try { localStorage.setItem('nbr_cfg', JSON.stringify(cfg)); } catch (e) {} }
+const LEVELS = ['Easy', 'Medium', 'Hard'];
+const SETBTN = [
+  { id: 'count', x: 50, label: 'Counting' }, { id: 'add', x: 270, label: 'Adding' },
+  { id: 'letters', x: 490, label: 'Letters' }, { id: 'level', x: 710, label: 'Level' },
+];
+const quizOn = () => cfg.count || cfg.add || cfg.letters;
+function toggleSetting(id) {
+  if (id === 'level') cfg.level = (cfg.level + 1) % 3; else cfg[id] = !cfg[id];
+  saveCfg(); beep(500, 0.06);
+}
+let quiz = null, lastQuiz = -99;
+const misses = { count: 0, add: 0, letters: 0 };
+
 // ---------- sound ----------
 let ac;
 function beep(f, d = 0.12, type = 'square', v = 0.05) {
@@ -51,8 +68,8 @@ function jingle(notes) { notes.forEach((f, i) => setTimeout(() => beep(f, 0.15, 
 function reset() {
   p = { x: 120, y: GROUND, vx: 0, vy: 0, face: 1, jumps: 0, on: true, spinning: false };
   platforms = []; items = []; parts = []; texts = [];
-  score = { studs: 0, balls: 0, buddies: 0 };
-  cam = 0; t = 0; nextX = 500; lastMile = 0;
+  score = { studs: 0, balls: 0, buddies: 0, stars: 0 };
+  cam = 0; t = 0; nextX = 500; lastMile = 0; lastQuiz = -99; quiz = null;
 }
 
 function addStud(x, y) { items.push({ k: 'stud', x, y }); }
@@ -96,7 +113,17 @@ function burst(x, y, n, colors) {
 function say(txt, x, y) { texts.push({ txt, x, y, life: 1.3 }); }
 
 // ---------- input ----------
-function startGame() { reset(); state = 'play'; beep(520, 0.15, 'triangle'); beep(780, 0.2, 'triangle'); }
+function speak(s) {
+  try {
+    speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(s); u.rate = 0.85; u.pitch = 1.1;
+    speechSynthesis.speak(u);
+  } catch (e) {}
+}
+function startGame() {
+  reset(); state = 'play'; beep(520, 0.15, 'triangle'); beep(780, 0.2, 'triangle');
+  try { const u = new SpeechSynthesisUtterance(' '); u.volume = 0; speechSynthesis.speak(u); } catch (e) {} // unlock speech on iPad
+}
 function jump() {
   if (state !== 'play' || p.jumps >= 2) return;
   p.vy = -640; p.jumps++; p.on = false;
@@ -107,9 +134,14 @@ addEventListener('keydown', e => {
   if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', ' '].includes(k)) e.preventDefault();
   if (e.repeat) { keys[k] = true; return; }
   keys[k] = true;
+  if (state === 'quiz') { quizKey(k); return; }
   if (state === 'menu') {
     if (k === 'ArrowLeft' || k === 'a') { sel = (sel + 4) % 5; beep(400, 0.06); }
     if (k === 'ArrowRight' || k === 'd') { sel = (sel + 1) % 5; beep(400, 0.06); }
+    if (k === '1') toggleSetting('count');
+    if (k === '2') toggleSetting('add');
+    if (k === '3') toggleSetting('letters');
+    if (k === '4') toggleSetting('level');
     if (k === ' ' || k === 'Enter') startGame();
   } else {
     if (k === ' ' || k === 'ArrowUp' || k === 'w') jump();
@@ -152,11 +184,23 @@ cv.addEventListener('pointermove', e => { if (ptrs.has(e.pointerId)) { ptrs.set(
 cv.addEventListener('contextmenu', e => e.preventDefault());
 
 cv.addEventListener('click', e => {
+  const c = toCanvas(e);
+  if (state === 'quiz') {
+    if (!quiz || quiz.done) return;
+    for (let i = 0; i < 3; i++) {
+      const b = QB(i);
+      if (c.x >= b.x && c.x <= b.x + b.w && c.y >= b.y && c.y <= b.y + b.h) { answerQuiz(i); return; }
+    }
+    if (c.y > 40 && c.y < 310) speak(quiz.say);   // tap the question to hear it again
+    return;
+  }
   if (state !== 'menu') return;
-  const r = cv.getBoundingClientRect();
-  const mx = (e.clientX - r.left) / r.width * W;
-  const i = Math.round((mx - 130) / 175);
-  if (i >= 0 && i < 5) { sel = i; startGame(); }
+  if (c.y >= 480 && c.y <= 535) {
+    for (const b of SETBTN) if (c.x >= b.x && c.x <= b.x + 200) { toggleSetting(b.id); return; }
+    return;
+  }
+  const i = Math.round((c.x - 130) / 175);
+  if (i >= 0 && i < 5 && c.y > 240 && c.y < 480) { sel = i; startGame(); }
 });
 
 // ---------- update ----------
@@ -189,6 +233,7 @@ function update(dt) {
   platforms = platforms.filter(pl => pl.x + pl.w > cam - 200);
 
   const cx = p.x, cy = p.y - 32;
+  let quizFor = false;
   for (const it of items) {
     if (it.k === 'buddy') it.x = it.x0 + Math.sin(t * 1.5 + it.x0) * 60;
     let dx = cx - it.x, dy = cy - it.y, d = Math.hypot(dx, dy);
@@ -196,13 +241,14 @@ function update(dt) {
     if (d < (p.spinning ? 62 : 38)) {
       it.gone = true;
       if (it.k === 'stud') { score.studs++; beep(880 + (score.studs % 5) * 60, 0.08, 'square', 0.04); burst(it.x, it.y, 5, ['#ffd23f', '#fff3b0']); }
-      if (it.k === 'ball') { score.balls++; jingle([660, 880, 1100]); burst(it.x, it.y, 18, ['#ff3b3b', '#fff', '#ffd23f']); say('Gotcha!', it.x, it.y - 20); }
-      if (it.k === 'buddy') { score.buddies++; jingle([520, 660, 780, 1040]); burst(it.x, it.y, 22, ['#ff77aa', '#ffd23f', '#fff']); say('New buddy!', it.x, it.y - 40); }
+      if (it.k === 'ball') { score.balls++; jingle([660, 880, 1100]); burst(it.x, it.y, 18, ['#ff3b3b', '#fff', '#ffd23f']); say('Gotcha!', it.x, it.y - 20); quizFor = true; }
+      if (it.k === 'buddy') { score.buddies++; jingle([520, 660, 780, 1040]); burst(it.x, it.y, 22, ['#ff77aa', '#ffd23f', '#fff']); say('New buddy!', it.x, it.y - 40); quizFor = true; }
     }
   }
   items = items.filter(it => !it.gone && it.x > cam - 200);
+  if (quizFor && quizOn() && t - lastQuiz > 6) startQuiz();
 
-  const total = score.studs + score.balls * 3 + score.buddies * 5;
+  const total = score.studs + score.balls * 3 + score.buddies * 5 + score.stars * 3;
   if (Math.floor(total / 25) > lastMile) {
     lastMile = Math.floor(total / 25);
     jingle([523, 659, 784, 1047, 1319]);
@@ -323,13 +369,14 @@ function drawItem(it) {
 
 function drawHUD() {
   ctx.fillStyle = 'rgba(0,0,0,0.35)';
-  ctx.beginPath(); ctx.roundRect(14, 12, 330, 52, 14); ctx.fill();
+  ctx.beginPath(); ctx.roundRect(14, 12, quizOn() ? 420 : 330, 52, 14); ctx.fill();
   ctx.font = FONT; ctx.textBaseline = 'middle'; ctx.fillStyle = '#fff';
   drawItem({ k: 'stud', x: cam + 40, y: 40 }); ctx.fillText(score.studs, 58, 40);
   drawItem({ k: 'ball', x: cam + 150, y: 38 }); ctx.fillText(score.balls, 174, 40);
   const b = { k: 'buddy', x0: cam + 255, x: cam + 255, y: 50 };
   ctx.save(); ctx.translate(255, 0); ctx.scale(0.55, 0.55); drawItem({ k: 'buddy', x0: 0, x: 0, y: 92 }); ctx.restore();
   ctx.fillText(score.buddies, 285, 40);
+  if (quizOn()) { ctx.fillStyle = '#ffd23f'; ctx.fillText('★ ' + score.stars, 340, 40); ctx.fillStyle = '#fff'; }
   if (touchMode) {
     ctx.textAlign = 'center';
     for (const b of Object.values(TB)) {
@@ -378,6 +425,131 @@ function drawMenu() {
     ctx.save(); ctx.translate(x, y); ctx.scale(1.3, 1.3); drawMinifig(0, 0, n, 0.8); ctx.restore();
     ctx.font = 'bold 26px Arial'; ctx.fillStyle = '#222'; ctx.fillText(n.name, x, 462);
   });
+  SETBTN.forEach((b, i) => {
+    const on = b.id === 'level' || cfg[b.id];
+    ctx.fillStyle = on ? '#2a9d8f' : 'rgba(0,0,0,0.35)';
+    ctx.beginPath(); ctx.roundRect(b.x, 485, 200, 42, 14); ctx.fill();
+    ctx.fillStyle = '#fff'; ctx.font = 'bold 22px Arial';
+    const txt = b.id === 'level' ? 'Level: ' + LEVELS[cfg.level] : (cfg[b.id] ? '✓ ' : '✗ ') + b.label;
+    ctx.fillText((touchMode ? '' : (i + 1) + ':  ') + txt, b.x + 100, 507);
+  });
+  ctx.textAlign = 'left';
+}
+
+// ---------- quiz ----------
+const WORDS = ['NINJA', 'KAI', 'JAY', 'COLE', 'ZANE', 'LLOYD', 'BRICK', 'LEGO', 'DRAGON', 'SWORD', 'STUD', 'BALL', 'BUDDY', 'HERO', 'CAT', 'DOG', 'SUN', 'FISH', 'MOON', 'STAR'];
+const rnd = n => Math.floor(Math.random() * n);
+const shuffle = a => { for (let i = a.length - 1; i > 0; i--) { const j = rnd(i + 1); [a[i], a[j]] = [a[j], a[i]]; } return a; };
+function pickOptions(correct, make) {
+  const set = new Set([correct]);
+  for (let g = 0; set.size < 3 && g < 200; g++) set.add(make());
+  const opts = shuffle([...set]);
+  return { options: opts.map(String), answer: opts.indexOf(correct) };
+}
+function makeQuestion(cat) {
+  const lv = cfg.level;
+  if (cat === 'count') {
+    const max = [5, 10, 15][lv], n = 1 + rnd(max);
+    return { cat, title: 'Count the studs!', say: 'How many studs are there?', vis: { type: 'studs', n },
+      prompt: 'How many studs?', ...pickOptions(n, () => Math.max(1, n + rnd(5) - 2)) };
+  }
+  if (cat === 'add') {
+    const max = [5, 10, 20][lv], sum = 2 + rnd(max - 1);
+    const lo = Math.max(1, sum - 10), hi = Math.min(10, sum - 1), a = lo + rnd(hi - lo + 1), b = sum - a;
+    return { cat, title: 'Brick math!', say: `What is ${a} plus ${b}?`, vis: { type: 'add', a, b },
+      prompt: '', ...pickOptions(sum, () => Math.max(1, sum + rnd(5) - 2)) };
+  }
+  const word = WORDS[rnd(WORDS.length)], atEnd = lv === 2 && Math.random() < 0.5;
+  const correct = atEnd ? word[word.length - 1] : word[0];
+  return { cat, title: 'Letter time!', say: `Which letter does ${word.toLowerCase()} ${atEnd ? 'end' : 'start'} with?`,
+    vis: { type: 'word', word }, prompt: `Which letter does it ${atEnd ? 'END' : 'START'} with?`,
+    ...pickOptions(correct, () => String.fromCharCode(65 + rnd(26))) };
+}
+function startQuiz() {
+  const bag = [];
+  ['count', 'add', 'letters'].filter(c => cfg[c]).forEach(c => { for (let i = 0; i <= Math.min(misses[c], 4); i++) bag.push(c); });
+  quiz = Object.assign(makeQuestion(bag[rnd(bag.length)]), { sel: 0, wrong: [], done: false, doneT: 0, shake: 0 });
+  state = 'quiz';
+  ptrs.clear(); jumpHeld = false; keys.ArrowLeft = keys.ArrowRight = keys.ArrowDown = false;
+  speak(quiz.say);
+}
+function quizKey(k) {
+  if (!quiz || quiz.done) return;
+  if (k === 'ArrowLeft' || k === 'a') quiz.sel = (quiz.sel + 2) % 3;
+  else if (k === 'ArrowRight' || k === 'd') quiz.sel = (quiz.sel + 1) % 3;
+  else if (k === '1' || k === '2' || k === '3') answerQuiz(+k - 1);
+  else if (k === ' ' || k === 'Enter') answerQuiz(quiz.sel);
+  else if (k === 'r') speak(quiz.say);
+}
+function answerQuiz(i) {
+  if (quiz.wrong.includes(i)) return;
+  if (i === quiz.answer) {
+    quiz.done = true; quiz.doneT = 1.2; quiz.sel = i;
+    score.stars++; score.studs += 3;
+    jingle([660, 880, 1100, 1320]); speak(['Great job!', 'You got it!', 'Awesome!', 'Super ninja!'][rnd(4)]);
+  } else {
+    quiz.wrong.push(i); quiz.shake = 0.4; misses[quiz.cat]++;
+    beep(200, 0.25, 'sawtooth', 0.05); speak('Try again!');
+  }
+}
+function quizTick(dt) {
+  if (!quiz) { state = 'play'; return; }
+  if (quiz.shake > 0) quiz.shake -= dt;
+  if (quiz.done && (quiz.doneT -= dt) <= 0) {
+    state = 'play'; lastQuiz = t; quiz = null;
+    burst(p.x, p.y - 60, 50, BRICKS.concat(['#fff']));
+    say('+3 studs!', p.x, p.y - 100);
+  }
+}
+function bigStud(x, y, s, c = '#ffd23f', d = '#c99a12') {
+  ellipse(x, y + s * 0.3, s / 2, s * 0.25, d);
+  ctx.fillStyle = d; ctx.fillRect(x - s / 2, y, s, s * 0.3);
+  ellipse(x, y, s / 2, s * 0.25, c);
+  ellipse(x - s * 0.12, y - s * 0.06, s * 0.14, s * 0.07, 'rgba(255,255,255,0.6)');
+}
+const QB = i => ({ x: 140 + i * 240, y: 335, w: 200, h: 120 });
+const QCOL = ['#e63946', '#4361ee', '#2a9d8f'];
+function drawQuiz() {
+  const q = quiz, v = q.vis;
+  ctx.fillStyle = 'rgba(0,0,0,0.55)'; ctx.fillRect(0, 0, W, H);
+  ctx.fillStyle = '#fffdf2'; ctx.beginPath(); ctx.roundRect(100, 30, 760, 480, 28); ctx.fill();
+  ctx.lineWidth = 8; ctx.strokeStyle = NINJAS[sel].c; ctx.stroke();
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillStyle = '#222'; ctx.font = 'bold 40px "Arial Rounded MT Bold", Arial';
+  ctx.fillText(q.title + ' 🔊', W / 2, 78);
+  if (v.type === 'studs') {
+    const rows = Math.ceil(v.n / 5);
+    for (let i = 0; i < v.n; i++) {
+      const r = Math.floor(i / 5), c = i % 5, inRow = Math.min(5, v.n - r * 5);
+      bigStud(W / 2 + (c - (inRow - 1) / 2) * 62, 150 + r * 46 + (rows === 1 ? 30 : 0), 40);
+    }
+  } else if (v.type === 'add') {
+    ctx.fillStyle = '#222'; ctx.font = 'bold 84px "Arial Rounded MT Bold", Arial';
+    ctx.fillText(`${v.a} + ${v.b} = ?`, W / 2, 150);
+    for (let i = 0; i < v.a; i++) bigStud(W / 2 - 190 + (i % 5 - 2) * 34, 215 + Math.floor(i / 5) * 32, 26);
+    for (let i = 0; i < v.b; i++) bigStud(W / 2 + 190 + (i % 5 - 2) * 34, 215 + Math.floor(i / 5) * 32, 26, '#ee4b4b', '#a82a2a');
+  } else {
+    const n = v.word.length;
+    for (let i = 0; i < n; i++) {
+      const x = W / 2 + (i - (n - 1) / 2) * 84, col = BRICKS[i % BRICKS.length];
+      ctx.fillStyle = col; ctx.fillRect(x - 38, 135, 76, 86);
+      stud(x, 135, 28, 8, col);
+      ctx.fillStyle = '#fff'; ctx.font = 'bold 64px Arial'; ctx.fillText(v.word[i], x, 180);
+    }
+  }
+  ctx.fillStyle = q.done ? '#2fbf4f' : '#444'; ctx.font = 'bold 34px Arial';
+  ctx.fillText(q.done ? 'Great job! ⭐' : q.prompt, W / 2, 285);
+  q.options.forEach((o, i) => {
+    const b = QB(i), wrong = q.wrong.includes(i), good = q.done && i === q.answer;
+    const dx = wrong && q.shake > 0 ? Math.sin(q.shake * 60) * 8 : 0;
+    ctx.fillStyle = good ? '#2fbf4f' : wrong ? '#b5b5b5' : QCOL[i];
+    ctx.beginPath(); ctx.roundRect(b.x + dx, b.y, b.w, b.h, 22); ctx.fill();
+    if (i === q.sel && !q.done && !wrong) { ctx.lineWidth = 8; ctx.strokeStyle = '#222'; ctx.stroke(); }
+    ctx.fillStyle = '#fff'; ctx.font = 'bold 76px Arial'; ctx.fillText(o, b.x + b.w / 2 + dx, b.y + b.h / 2 + 4);
+    if (!touchMode) { ctx.font = 'bold 22px Arial'; ctx.fillText(i + 1, b.x + 22, b.y + 24); }
+  });
+  ctx.fillStyle = '#777'; ctx.font = 'bold 20px Arial';
+  ctx.fillText(touchMode ? 'Tap an answer. Tap the question to hear it again.' : '← → then SPACE, or press 1 2 3.  R hears it again.', W / 2, 482);
   ctx.textAlign = 'left';
 }
 
@@ -388,6 +560,7 @@ function frame(now) {
   const dt = Math.min(0.033, (now - last) / 1000); last = now;
   ctx.clearRect(0, 0, W, H);
   if (state === 'menu') { t += dt; drawMenu(); }
+  else if (state === 'quiz') { t += dt; quizTick(dt); drawPlay(); if (quiz) drawQuiz(); }
   else { update(dt); drawPlay(); }
   requestAnimationFrame(frame);
 }
