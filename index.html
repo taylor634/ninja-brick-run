@@ -26,6 +26,10 @@ const NINJAS = [
   { name: 'Zane',  c: '#f4f4f4', d: '#b8b8b8' },
   { name: 'Lloyd', c: '#2e9e3e', d: '#1f6b2a' },
 ];
+const POKE = [
+  { id: 'pika', name: 'Pikachu' }, { id: 'char', name: 'Charmander' }, { id: 'squirt', name: 'Squirtle' },
+  { id: 'bulb', name: 'Bulbasaur' }, { id: 'eevee', name: 'Eevee' },
+];
 const BRICKS = ['#e63946', '#2a9d8f', '#f4a261', '#4361ee', '#9b5de5', '#f7c531'];
 
 let state = 'menu', sel = 0;
@@ -33,13 +37,15 @@ let keys = {}, t = 0, cam = 0, nextX = 0, lastMile = 0;
 let p, platforms, items, parts, texts, score;
 
 // quiz settings (saved in the browser)
-let cfg = { count: true, add: true, letters: true, level: 0 };
+let cfg = { count: true, add: true, letters: true, level: 0, truck: true };
 try { Object.assign(cfg, JSON.parse(localStorage.getItem('nbr_cfg') || '{}')); } catch (e) {}
 function saveCfg() { try { localStorage.setItem('nbr_cfg', JSON.stringify(cfg)); } catch (e) {} }
 const LEVELS = ['Easy', 'Medium', 'Hard'];
+const BW = 172;
 const SETBTN = [
-  { id: 'count', x: 50, label: 'Counting' }, { id: 'add', x: 270, label: 'Adding' },
-  { id: 'letters', x: 490, label: 'Letters' }, { id: 'level', x: 710, label: 'Level' },
+  { id: 'count', x: 22, label: 'Counting' }, { id: 'add', x: 208, label: 'Adding' },
+  { id: 'letters', x: 394, label: 'Letters' }, { id: 'level', x: 580, label: 'Level' },
+  { id: 'truck', x: 766, label: 'Ride' },
 ];
 const quizOn = () => cfg.count || cfg.add || cfg.letters;
 function toggleSetting(id) {
@@ -68,7 +74,7 @@ function jingle(notes) { notes.forEach((f, i) => setTimeout(() => beep(f, 0.15, 
 function reset() {
   p = { x: 120, y: GROUND, vx: 0, vy: 0, face: 1, jumps: 0, on: true, spinning: false };
   platforms = []; items = []; parts = []; texts = [];
-  score = { studs: 0, balls: 0, buddies: 0, stars: 0 };
+  score = { studs: 0, balls: 0, buddies: 0, stars: 0, caught: Object.fromEntries(POKE.map(q => [q.id, 0])) };
   cam = 0; t = 0; nextX = 500; lastMile = 0; lastQuiz = -99; quiz = null;
 }
 
@@ -93,7 +99,7 @@ function gen(x) {
     items.push({ k: 'ball', x: x + 2 * 170 + 60, y: GROUND - 210 - 50 });
     nextX += 640;
   } else if (r === 3) {     // friendly yellow buddy
-    items.push({ k: 'buddy', x0: x + 100, x: x + 100, y: GROUND - 20 });
+    items.push({ k: 'buddy', kind: Math.floor(Math.random() * POKE.length), x0: x + 100, x: x + 100, y: GROUND - 20 });
     for (let i = 0; i < 5; i++) addStud(x + 40 + i * 50, GROUND - 90);
     nextX += 420;
   } else {                  // high ball (needs double jump) + ground studs
@@ -142,6 +148,7 @@ addEventListener('keydown', e => {
     if (k === '2') toggleSetting('add');
     if (k === '3') toggleSetting('letters');
     if (k === '4') toggleSetting('level');
+    if (k === '5') toggleSetting('truck');
     if (k === ' ' || k === 'Enter') startGame();
   } else {
     if (k === ' ' || k === 'ArrowUp' || k === 'w') jump();
@@ -196,7 +203,7 @@ cv.addEventListener('click', e => {
   }
   if (state !== 'menu') return;
   if (c.y >= 480 && c.y <= 535) {
-    for (const b of SETBTN) if (c.x >= b.x && c.x <= b.x + 200) { toggleSetting(b.id); return; }
+    for (const b of SETBTN) if (c.x >= b.x && c.x <= b.x + BW) { toggleSetting(b.id); return; }
     return;
   }
   const i = Math.round((c.x - 130) / 175);
@@ -212,7 +219,8 @@ function update(dt) {
   const target = ((right ? 1 : 0) - (left ? 1 : 0)) * speed;
   if (target) p.face = Math.sign(target);
   p.vx += (target - p.vx) * Math.min(1, dt * 10);
-  p.x = Math.max(20, p.x + p.vx * dt);
+  p.x = Math.max(cfg.truck ? 75 : 20, p.x + p.vx * dt);
+  p.wheel = (p.wheel || 0) + p.vx * dt / 32;
 
   p.vy += 1800 * dt;
   if (p.spinning && p.vy > 120) p.vy *= 0.9;      // spinjitzu floats a little
@@ -221,7 +229,7 @@ function update(dt) {
   let on = false;
   if (p.y >= GROUND) { p.y = GROUND; p.vy = 0; on = true; }
   for (const pl of platforms) {
-    if (p.vy >= 0 && prev <= pl.y + 2 && p.y >= pl.y && p.x + 12 > pl.x && p.x - 12 < pl.x + pl.w) {
+    if (p.vy >= 0 && prev <= pl.y + 2 && p.y >= pl.y && p.x + (cfg.truck ? 55 : 12) > pl.x && p.x - (cfg.truck ? 55 : 12) < pl.x + pl.w) {
       p.y = pl.y; p.vy = 0; on = true;
     }
   }
@@ -232,17 +240,17 @@ function update(dt) {
   while (nextX < cam + W + 300) gen(nextX);
   platforms = platforms.filter(pl => pl.x + pl.w > cam - 200);
 
-  const cx = p.x, cy = p.y - 32;
+  const cx = p.x, cy = p.y - (cfg.truck ? 55 : 32);
   let quizFor = false;
   for (const it of items) {
     if (it.k === 'buddy') it.x = it.x0 + Math.sin(t * 1.5 + it.x0) * 60;
     let dx = cx - it.x, dy = cy - it.y, d = Math.hypot(dx, dy);
     if (p.spinning && it.k !== 'buddy' && d < 190 && d > 1) { it.x += dx / d * 520 * dt; it.y += dy / d * 520 * dt; }
-    if (d < (p.spinning ? 62 : 38)) {
+    if (d < (p.spinning ? 62 : 38) + (cfg.truck ? 30 : 0)) {
       it.gone = true;
       if (it.k === 'stud') { score.studs++; beep(880 + (score.studs % 5) * 60, 0.08, 'square', 0.04); burst(it.x, it.y, 5, ['#ffd23f', '#fff3b0']); }
-      if (it.k === 'ball') { score.balls++; jingle([660, 880, 1100]); burst(it.x, it.y, 18, ['#ff3b3b', '#fff', '#ffd23f']); say('Gotcha!', it.x, it.y - 20); quizFor = true; }
-      if (it.k === 'buddy') { score.buddies++; jingle([520, 660, 780, 1040]); burst(it.x, it.y, 22, ['#ff77aa', '#ffd23f', '#fff']); say('New buddy!', it.x, it.y - 40); quizFor = true; }
+      if (it.k === 'ball') { score.balls++; jingle([660, 880, 1100]); burst(it.x, it.y, 18, ['#ff3b3b', '#fff', '#ffd23f']); catchPoke(Math.floor(Math.random() * POKE.length), it.x, it.y); quizFor = true; }
+      if (it.k === 'buddy') { score.buddies++; jingle([520, 660, 780, 1040]); burst(it.x, it.y, 22, ['#ff77aa', '#ffd23f', '#fff']); catchPoke(it.kind, it.x, it.y); quizFor = true; }
     }
   }
   items = items.filter(it => !it.gone && it.x > cam - 200);
@@ -319,14 +327,54 @@ function drawMinifig(x, y, n, step) {
   stud(x, y - 66, 12, 5, n.c);                                // head stud
 }
 
+// Monster truck with the ninja minifig sitting in the cab. Drawn at the origin, wheels touching y=0, facing right.
+function drawTruck(n, wa, bob) {
+  ctx.save(); ctx.translate(0, bob);
+  ctx.fillStyle = n.d; ctx.fillRect(-72, -72, 144, 28);                 // chassis
+  ctx.fillStyle = '#e8b923'; ctx.fillRect(-72, -52, 144, 6);            // gold stripe
+  ctx.fillStyle = n.c;
+  ctx.beginPath(); ctx.roundRect(-54, -118, 90, 52, 10); ctx.fill();    // cab
+  ctx.fillRect(34, -92, 40, 24);                                         // hood
+  ctx.fillStyle = '#444'; ctx.fillRect(72, -68, 8, 24);                  // bumper
+  ellipse(74, -82, 6, 6, '#fff3a0');                                     // headlight
+  stud(-10, -118, 24, 8, n.c);                                           // roof stud
+  ctx.fillStyle = '#bfe8ff'; ctx.fillRect(-46, -110, 64, 30);            // window
+  ctx.save();
+  ctx.beginPath(); ctx.rect(-46, -110, 64, 30); ctx.clip();
+  ctx.translate(-14, -62); ctx.scale(0.66, 0.66);
+  drawMinifig(0, 0, n, 0.8);                                              // the driver
+  ctx.restore();
+  ctx.strokeStyle = n.d; ctx.lineWidth = 4; ctx.strokeRect(-46, -110, 64, 30);
+  ctx.restore();
+  for (const wx of [-48, 48]) {                                           // big wheels
+    ctx.save(); ctx.translate(wx, -32);
+    ellipse(0, 0, 32, 32, '#1e1e1e');
+    for (let i = 0; i < 10; i++) { ctx.save(); ctx.rotate(wa + i * Math.PI / 5); ctx.fillStyle = '#0c0c0c'; ctx.fillRect(-5, -37, 10, 8); ctx.restore(); }
+    ellipse(0, 0, 17, 17, '#c9c9c9');
+    ctx.rotate(wa); ctx.fillStyle = n.c; ctx.fillRect(-3, -15, 6, 30); ctx.fillRect(-15, -3, 30, 6);
+    ellipse(0, 0, 5, 5, '#333');
+    ctx.restore();
+  }
+}
+
 function drawPlayer() {
   const n = NINJAS[sel], x = p.x - cam;
   if (p.spinning) {
     for (let i = 0; i < 5; i++) {
       ctx.strokeStyle = n.c; ctx.globalAlpha = 0.55; ctx.lineWidth = 5;
-      ctx.beginPath(); ctx.ellipse(x, p.y - 8 - i * 14, 16 + i * 9, 6, t * 12 + i, 0, Math.PI * 2); ctx.stroke();
+      ctx.beginPath(); ctx.ellipse(x, p.y - 8 - i * 14 * (cfg.truck ? 1.6 : 1), (16 + i * 9) * (cfg.truck ? 1.8 : 1), 6, t * 12 + i, 0, Math.PI * 2); ctx.stroke();
     }
     ctx.globalAlpha = 1;
+  }
+  if (cfg.truck) {
+    const tilt = p.spinning ? -0.3 : Math.max(-0.25, Math.min(0.25, p.vy * 0.0004));
+    const bob = p.on ? Math.sin(t * 22) * 2 * Math.min(1, Math.abs(p.vx) / 200) : 0;
+    ctx.save();
+    ctx.translate(x, p.y); ctx.scale(p.face, 1); ctx.rotate(tilt * p.face);
+    drawTruck(n, p.wheel * p.face + (p.spinning ? t * 30 : 0), bob);
+    ctx.restore();
+    if (p.on) ellipse(x, p.y + 2, 70, 5, 'rgba(0,0,0,0.2)');
+    return;
   }
   ctx.save();
   ctx.translate(x, 0);
@@ -350,9 +398,27 @@ function drawItem(it) {
     ctx.lineWidth = 3; ctx.strokeStyle = '#222'; ctx.beginPath(); ctx.arc(0, 0, 16, 0, Math.PI * 2); ctx.moveTo(-16, 0); ctx.lineTo(16, 0); ctx.stroke();
     ellipse(0, 0, 6, 6, '#fff'); ctx.beginPath(); ctx.arc(0, 0, 6, 0, Math.PI * 2); ctx.stroke();
     ctx.restore();
-  } else {                              // friendly yellow buddy
+  } else {                              // wandering Pokémon
     const y = it.y + Math.abs(Math.sin(t * 6 + it.x0)) * -6, f = Math.cos(t * 1.5 + it.x0) >= 0 ? 1 : -1;
     ctx.save(); ctx.translate(x, y); ctx.scale(f, 1);
+    drawCreature(POKE[it.kind].id);
+    ctx.restore();
+  }
+}
+
+function catchPoke(kind, x, y) {
+  const pk = POKE[kind];
+  score.caught[pk.id]++;
+  say((score.caught[pk.id] === 1 ? 'NEW ' : 'Gotcha ') + pk.name + '!', x, y - 40);
+  jingle([520, 660, 780, 1040]); burst(x, y, 22, ['#ff77aa', '#ffd23f', '#fff']);
+}
+
+// Simple blocky-cute creatures, drawn around the origin, feet at y=20, facing right.
+function drawCreature(id) {
+  const eye = (x, y, c = '#222') => { ellipse(x, y, 3, 4, c); ellipse(x + 1, y - 1.5, 1.1, 1.1, '#fff'); };
+  const smile = (x, y) => { ctx.strokeStyle = '#222'; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.arc(x, y, 3, 0.1, Math.PI - 0.1); ctx.stroke(); };
+  ctx.lineCap = 'round';
+  if (id === 'pika') {
     ctx.strokeStyle = '#c99a12'; ctx.lineWidth = 6; ctx.beginPath(); ctx.moveTo(-14, 6); ctx.lineTo(-26, -4); ctx.lineTo(-20, -8); ctx.lineTo(-32, -20); ctx.stroke();
     ellipse(0, 4, 18, 16, '#ffd23f');
     ctx.fillStyle = '#ffd23f';
@@ -360,23 +426,64 @@ function drawItem(it) {
     ctx.beginPath(); ctx.moveTo(12, -8); ctx.lineTo(18, -34); ctx.lineTo(4, -12); ctx.fill();
     ctx.fillStyle = '#222'; ctx.beginPath(); ctx.moveTo(-15, -26); ctx.lineTo(-18, -34); ctx.lineTo(-11, -29); ctx.fill();
     ctx.beginPath(); ctx.moveTo(15, -26); ctx.lineTo(18, -34); ctx.lineTo(11, -29); ctx.fill();
-    ellipse(-6, 0, 2.5, 3.5, '#222'); ellipse(8, 0, 2.5, 3.5, '#222');
-    ellipse(-12, 8, 4, 4, '#ff5a5a'); ellipse(14, 8, 4, 4, '#ff5a5a');
-    ctx.strokeStyle = '#222'; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.arc(1, 7, 3, 0.1, Math.PI - 0.1); ctx.stroke();
-    ctx.restore();
+    eye(-6, 0); eye(8, 0);
+    ellipse(-12, 8, 4, 4, '#ff5a5a'); ellipse(14, 8, 4, 4, '#ff5a5a'); smile(1, 6);
+  } else if (id === 'char') {
+    ctx.strokeStyle = '#f08030'; ctx.lineWidth = 7; ctx.beginPath(); ctx.moveTo(-14, 10); ctx.quadraticCurveTo(-32, 12, -30, -4); ctx.stroke();
+    ctx.fillStyle = '#ff5a1f'; ctx.beginPath(); ctx.moveTo(-37, -2); ctx.quadraticCurveTo(-30, -28, -23, -2); ctx.fill();
+    ctx.fillStyle = '#ffd23f'; ctx.beginPath(); ctx.moveTo(-33, -2); ctx.quadraticCurveTo(-30, -17, -27, -2); ctx.fill();
+    ellipse(-8, 19, 7, 4, '#d96a1f'); ellipse(8, 19, 7, 4, '#d96a1f');
+    ellipse(0, 7, 16, 14, '#f08030'); ellipse(3, 11, 9, 8, '#f8d890');
+    ellipse(2, -10, 14, 13, '#f08030'); ellipse(11, -6, 7, 5, '#f08030');
+    eye(-3, -12); eye(8, -12); smile(8, -3);
+  } else if (id === 'squirt') {
+    ctx.strokeStyle = '#5bb5e8'; ctx.lineWidth = 6; ctx.beginPath(); ctx.moveTo(-14, 14); ctx.quadraticCurveTo(-32, 16, -26, 2); ctx.stroke();
+    ellipse(-10, 8, 14, 14, '#b8864b');
+    ctx.strokeStyle = '#8a5f2c'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(-18, 0); ctx.lineTo(-4, 0); ctx.moveTo(-18, 14); ctx.lineTo(-4, 14); ctx.moveTo(-11, -4); ctx.lineTo(-11, 18); ctx.stroke();
+    ellipse(-5, 19, 6, 4, '#3f95c8'); ellipse(10, 19, 6, 4, '#3f95c8');
+    ellipse(2, 7, 14, 13, '#5bb5e8'); ellipse(6, 10, 8, 8, '#f6e7a8');
+    ellipse(3, -9, 14, 12, '#5bb5e8');
+    eye(-1, -11); eye(10, -11); smile(5, -3);
+  } else if (id === 'bulb') {
+    ellipse(-10, 19, 7, 4, '#4aa88f'); ellipse(10, 19, 7, 4, '#4aa88f');
+    ellipse(0, 7, 19, 13, '#5fc2a8');
+    ellipse(-7, 4, 3, 3, '#3a9a82'); ellipse(0, 12, 3, 2.5, '#3a9a82');
+    ctx.fillStyle = '#5fc2a8';
+    ctx.beginPath(); ctx.moveTo(8, 0); ctx.lineTo(10, -10); ctx.lineTo(16, 0); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(-8, -2); ctx.lineTo(-12, -10); ctx.lineTo(-2, -4); ctx.fill();
+    ellipse(-3, -8, 13, 11, '#3fa34d');
+    ctx.fillStyle = '#3fa34d'; ctx.beginPath(); ctx.moveTo(-10, -14); ctx.lineTo(-3, -30); ctx.lineTo(4, -14); ctx.fill();
+    ellipse(-7, -10, 3, 2, '#6fd07a');
+    eye(8, 4, '#d33'); eye(-1, 4, '#d33'); smile(4, 9);
+  } else {  // eevee
+    ctx.fillStyle = '#b57b45'; ctx.beginPath(); ctx.ellipse(-24, 2, 9, 16, 0.4, 0, Math.PI * 2); ctx.fill();
+    ellipse(-28, -10, 7, 6, '#f6e2b8');
+    ellipse(-7, 19, 7, 4, '#8f5d30'); ellipse(7, 19, 7, 4, '#8f5d30');
+    ellipse(0, 6, 16, 14, '#b57b45');
+    ctx.fillStyle = '#b57b45';
+    ctx.beginPath(); ctx.moveTo(-12, -16); ctx.lineTo(-18, -38); ctx.lineTo(-3, -22); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(12, -16); ctx.lineTo(18, -38); ctx.lineTo(3, -22); ctx.fill();
+    ctx.fillStyle = '#f6e2b8'; ctx.beginPath(); ctx.moveTo(-12, -22); ctx.lineTo(-15, -32); ctx.lineTo(-7, -23); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(12, -22); ctx.lineTo(15, -32); ctx.lineTo(7, -23); ctx.fill();
+    ellipse(0, -9, 13, 12, '#b57b45');
+    ellipse(-11, 0, 7, 6, '#f6e2b8'); ellipse(11, 0, 7, 6, '#f6e2b8'); ellipse(0, 3, 9, 6, '#f6e2b8');
+    eye(-5, -9); eye(6, -9); ellipse(1, -4, 2, 1.5, '#222'); smile(1, -2);
   }
+  ctx.lineCap = 'butt';
 }
 
 function drawHUD() {
   ctx.fillStyle = 'rgba(0,0,0,0.35)';
-  ctx.beginPath(); ctx.roundRect(14, 12, quizOn() ? 420 : 330, 52, 14); ctx.fill();
+  const sx = quizOn() ? 205 : 120, slot = 92;
+  ctx.beginPath(); ctx.roundRect(14, 12, sx + POKE.length * slot + 4, 52, 14); ctx.fill();
   ctx.font = FONT; ctx.textBaseline = 'middle'; ctx.fillStyle = '#fff';
   drawItem({ k: 'stud', x: cam + 40, y: 40 }); ctx.fillText(score.studs, 58, 40);
-  drawItem({ k: 'ball', x: cam + 150, y: 38 }); ctx.fillText(score.balls, 174, 40);
-  const b = { k: 'buddy', x0: cam + 255, x: cam + 255, y: 50 };
-  ctx.save(); ctx.translate(255, 0); ctx.scale(0.55, 0.55); drawItem({ k: 'buddy', x0: 0, x: 0, y: 92 }); ctx.restore();
-  ctx.fillText(score.buddies, 285, 40);
-  if (quizOn()) { ctx.fillStyle = '#ffd23f'; ctx.fillText('★ ' + score.stars, 340, 40); ctx.fillStyle = '#fff'; }
+  if (quizOn()) { ctx.fillStyle = '#ffd23f'; ctx.fillText('★ ' + score.stars, 118, 40); ctx.fillStyle = '#fff'; }
+  POKE.forEach((pk, i) => {                       // collection: one slot per Pokémon, dim until caught
+    const x0 = sx + i * slot, n = score.caught[pk.id];
+    ctx.save(); ctx.globalAlpha = n ? 1 : 0.35; ctx.translate(x0 + 14, 47); ctx.scale(0.5, 0.5); drawCreature(pk.id); ctx.restore();
+    ctx.fillText(n, x0 + 38, 40);
+  });
   if (touchMode) {
     ctx.textAlign = 'center';
     for (const b of Object.values(TB)) {
@@ -422,16 +529,21 @@ function drawMenu() {
   NINJAS.forEach((n, i) => {
     const x = 130 + i * 175, on = i === sel, y = 380 - (on ? Math.abs(Math.sin(t * 6)) * 18 : 0);
     if (on) { ctx.fillStyle = 'rgba(255,255,255,0.6)'; ctx.beginPath(); ctx.roundRect(x - 70, 250, 140, 190, 18); ctx.fill(); }
-    ctx.save(); ctx.translate(x, y); ctx.scale(1.3, 1.3); drawMinifig(0, 0, n, 0.8); ctx.restore();
+    ctx.save();
+    if (cfg.truck) { ctx.translate(x, y + 18); ctx.scale(0.88, 0.88); drawTruck(n, on ? t * 4 : 0, 0); }
+    else { ctx.translate(x, y); ctx.scale(1.3, 1.3); drawMinifig(0, 0, n, 0.8); }
+    ctx.restore();
     ctx.font = 'bold 26px Arial'; ctx.fillStyle = '#222'; ctx.fillText(n.name, x, 462);
   });
   SETBTN.forEach((b, i) => {
-    const on = b.id === 'level' || cfg[b.id];
+    const on = b.id === 'level' || b.id === 'truck' || cfg[b.id];
     ctx.fillStyle = on ? '#2a9d8f' : 'rgba(0,0,0,0.35)';
-    ctx.beginPath(); ctx.roundRect(b.x, 485, 200, 42, 14); ctx.fill();
-    ctx.fillStyle = '#fff'; ctx.font = 'bold 22px Arial';
-    const txt = b.id === 'level' ? 'Level: ' + LEVELS[cfg.level] : (cfg[b.id] ? '✓ ' : '✗ ') + b.label;
-    ctx.fillText((touchMode ? '' : (i + 1) + ':  ') + txt, b.x + 100, 507);
+    ctx.beginPath(); ctx.roundRect(b.x, 485, BW, 42, 14); ctx.fill();
+    ctx.fillStyle = '#fff'; ctx.font = 'bold 20px Arial';
+    const txt = b.id === 'level' ? 'Level: ' + LEVELS[cfg.level]
+      : b.id === 'truck' ? 'Ride: ' + (cfg.truck ? 'Truck' : 'On foot')
+      : (cfg[b.id] ? '✓ ' : '✗ ') + b.label;
+    ctx.fillText((touchMode ? '' : (i + 1) + ': ') + txt, b.x + BW / 2, 507);
   });
   ctx.textAlign = 'left';
 }
