@@ -28,8 +28,11 @@ const NINJAS = [
 ];
 const POKE = [
   { id: 'pika', name: 'Pikachu' }, { id: 'char', name: 'Charmander' }, { id: 'squirt', name: 'Squirtle' },
-  { id: 'bulb', name: 'Bulbasaur' }, { id: 'eevee', name: 'Eevee' },
+  { id: 'bulb', name: 'Bulbasaur' }, { id: 'eevee', name: 'Eevee' }, { id: 'jigg', name: 'Jigglypuff' },
+  { id: 'psy', name: 'Psyduck' }, { id: 'meow', name: 'Meowth' },
+  { id: 'mew2', name: 'Mewtwo' },            // rare: always keep last
 ];
+const pickKind = () => Math.random() < 0.07 ? POKE.length - 1 : Math.floor(Math.random() * (POKE.length - 1));
 const BRICKS = ['#e63946', '#2a9d8f', '#f4a261', '#4361ee', '#9b5de5', '#f7c531'];
 
 let state = 'menu', sel = 0;
@@ -37,14 +40,14 @@ let keys = {}, t = 0, cam = 0, nextX = 0, lastMile = 0;
 let p, platforms, items, parts, texts, score;
 
 // quiz settings (saved in the browser)
-let cfg = { count: true, add: true, letters: true, level: 0, truck: true };
+let cfg = { count: true, add: true, letters: true, level: 0, truck: true, voice: true };
 try { Object.assign(cfg, JSON.parse(localStorage.getItem('nbr_cfg') || '{}')); } catch (e) {}
 function saveCfg() { try { localStorage.setItem('nbr_cfg', JSON.stringify(cfg)); } catch (e) {} }
 const LEVELS = ['Easy', 'Medium', 'Hard'];
 const BW = 172;
 const SETBTN = [
   { id: 'count', x: 22, label: 'Counting' }, { id: 'add', x: 208, label: 'Adding' },
-  { id: 'letters', x: 394, label: 'Letters' }, { id: 'level', x: 580, label: 'Level' },
+  { id: 'letters', x: 394, label: 'Reading' }, { id: 'level', x: 580, label: 'Level' },
   { id: 'truck', x: 766, label: 'Ride' },
 ];
 const quizOn = () => cfg.count || cfg.add || cfg.letters;
@@ -80,7 +83,14 @@ function reset() {
 
 function addStud(x, y) { items.push({ k: 'stud', x, y }); }
 function gen(x) {
-  const r = Math.floor(Math.random() * 5);
+  let r = Math.floor(Math.random() * 6);
+  if (r === 5 && x < 1200) r = 0;           // no skeletons right at the start
+  if (r === 5) {                            // Skulkin skeleton: jump on it or spin to smash it
+    items.push({ k: 'skel', x0: x + 140, x: x + 140, y: GROUND });
+    for (let i = 0; i < 5; i++) addStud(x + 60 + i * 50, GROUND - 130 - Math.sin(i / 4 * Math.PI) * 30);
+    nextX += 460;
+    return;
+  }
   if (r === 0) {            // arc of studs
     for (let i = 0; i < 7; i++) addStud(x + i * 40, GROUND - 30 - Math.sin(i / 6 * Math.PI) * 110);
     nextX += 380;
@@ -99,7 +109,7 @@ function gen(x) {
     items.push({ k: 'ball', x: x + 2 * 170 + 60, y: GROUND - 210 - 50 });
     nextX += 640;
   } else if (r === 3) {     // friendly yellow buddy
-    items.push({ k: 'buddy', kind: Math.floor(Math.random() * POKE.length), x0: x + 100, x: x + 100, y: GROUND - 20 });
+    items.push({ k: 'buddy', kind: pickKind(), x0: x + 100, x: x + 100, y: GROUND - 20 });
     for (let i = 0; i < 5; i++) addStud(x + 40 + i * 50, GROUND - 90);
     nextX += 420;
   } else {                  // high ball (needs double jump) + ground studs
@@ -140,6 +150,7 @@ addEventListener('keydown', e => {
   if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', ' '].includes(k)) e.preventDefault();
   if (e.repeat) { keys[k] = true; return; }
   keys[k] = true;
+  if (state === 'record') { recordKey(k); return; }
   if (state === 'quiz') { quizKey(k); return; }
   if (state === 'menu') {
     if (k === 'ArrowLeft' || k === 'a') { sel = (sel + 4) % 5; beep(400, 0.06); }
@@ -149,6 +160,7 @@ addEventListener('keydown', e => {
     if (k === '3') toggleSetting('letters');
     if (k === '4') toggleSetting('level');
     if (k === '5') toggleSetting('truck');
+    if (k === 'v') openRecorder();
     if (k === ' ' || k === 'Enter') startGame();
   } else {
     if (k === ' ' || k === 'ArrowUp' || k === 'w') jump();
@@ -198,10 +210,15 @@ cv.addEventListener('click', e => {
       const b = QB(i);
       if (c.x >= b.x && c.x <= b.x + b.w && c.y >= b.y && c.y <= b.y + b.h) { answerQuiz(i); return; }
     }
-    if (c.y > 40 && c.y < 310) speak(quiz.say);   // tap the question to hear it again
+    if (c.y > 40 && c.y < 310) speakClips(quiz.clips, quiz.say);   // tap the question to hear it again
+    return;
+  }
+  if (state === 'record') {
+    for (const b of RB) if (c.x >= b.x && c.x <= b.x + b.w && c.y >= b.y && c.y <= b.y + b.h) { recAction(b.id); return; }
     return;
   }
   if (state !== 'menu') return;
+  if (c.y < 62 && c.x > W - 232) { openRecorder(); return; }
   if (c.y >= 480 && c.y <= 535) {
     for (const b of SETBTN) if (c.x >= b.x && c.x <= b.x + BW) { toggleSetting(b.id); return; }
     return;
@@ -218,7 +235,8 @@ function update(dt) {
   const speed = p.spinning ? 340 : 260;
   const target = ((right ? 1 : 0) - (left ? 1 : 0)) * speed;
   if (target) p.face = Math.sign(target);
-  p.vx += (target - p.vx) * Math.min(1, dt * 10);
+  p.hurt = Math.max(0, (p.hurt || 0) - dt);
+  if (p.hurt < 0.75) p.vx += (target - p.vx) * Math.min(1, dt * 10);   // no steering right after a bump
   p.x = Math.max(cfg.truck ? 75 : 20, p.x + p.vx * dt);
   p.wheel = (p.wheel || 0) + p.vx * dt / 32;
 
@@ -243,13 +261,14 @@ function update(dt) {
   const cx = p.x, cy = p.y - (cfg.truck ? 55 : 32);
   let quizFor = false;
   for (const it of items) {
+    if (it.k === 'skel') { it.x = it.x0 + Math.sin(t * 1.2 + it.x0) * 70; skelHit(it); continue; }
     if (it.k === 'buddy') it.x = it.x0 + Math.sin(t * 1.5 + it.x0) * 60;
     let dx = cx - it.x, dy = cy - it.y, d = Math.hypot(dx, dy);
-    if (p.spinning && it.k !== 'buddy' && d < 190 && d > 1) { it.x += dx / d * 520 * dt; it.y += dy / d * 520 * dt; }
+    if (p.spinning && (it.k === 'stud' || it.k === 'ball') && d < 190 && d > 1) { it.x += dx / d * 520 * dt; it.y += dy / d * 520 * dt; }
     if (d < (p.spinning ? 62 : 38) + (cfg.truck ? 30 : 0)) {
       it.gone = true;
       if (it.k === 'stud') { score.studs++; beep(880 + (score.studs % 5) * 60, 0.08, 'square', 0.04); burst(it.x, it.y, 5, ['#ffd23f', '#fff3b0']); }
-      if (it.k === 'ball') { score.balls++; jingle([660, 880, 1100]); burst(it.x, it.y, 18, ['#ff3b3b', '#fff', '#ffd23f']); catchPoke(Math.floor(Math.random() * POKE.length), it.x, it.y); quizFor = true; }
+      if (it.k === 'ball') { score.balls++; jingle([660, 880, 1100]); burst(it.x, it.y, 18, ['#ff3b3b', '#fff', '#ffd23f']); catchPoke(pickKind(), it.x, it.y); quizFor = true; }
       if (it.k === 'buddy') { score.buddies++; jingle([520, 660, 780, 1040]); burst(it.x, it.y, 22, ['#ff77aa', '#ffd23f', '#fff']); catchPoke(it.kind, it.x, it.y); quizFor = true; }
     }
   }
@@ -398,6 +417,8 @@ function drawItem(it) {
     ctx.lineWidth = 3; ctx.strokeStyle = '#222'; ctx.beginPath(); ctx.arc(0, 0, 16, 0, Math.PI * 2); ctx.moveTo(-16, 0); ctx.lineTo(16, 0); ctx.stroke();
     ellipse(0, 0, 6, 6, '#fff'); ctx.beginPath(); ctx.arc(0, 0, 6, 0, Math.PI * 2); ctx.stroke();
     ctx.restore();
+  } else if (it.k === 'skel') {
+    drawSkeleton(x, it.y, Math.cos(t * 1.2 + it.x0) >= 0 ? 1 : -1, t * 10);
   } else {                              // wandering Pokémon
     const y = it.y + Math.abs(Math.sin(t * 6 + it.x0)) * -6, f = Math.cos(t * 1.5 + it.x0) >= 0 ? 1 : -1;
     ctx.save(); ctx.translate(x, y); ctx.scale(f, 1);
@@ -409,8 +430,42 @@ function drawItem(it) {
 function catchPoke(kind, x, y) {
   const pk = POKE[kind];
   score.caught[pk.id]++;
+  if (kind === POKE.length - 1) {                         // rare!
+    say('RARE ' + pk.name + '!!', x, y - 40);
+    jingle([392, 523, 659, 784, 1047, 1319, 1568]); burst(x, y, 70, ['#b97cff', '#ffd23f', '#fff', '#7ad7ff']);
+    return;
+  }
   say((score.caught[pk.id] === 1 ? 'NEW ' : 'Gotcha ') + pk.name + '!', x, y - 40);
   jingle([520, 660, 780, 1040]); burst(x, y, 22, ['#ff77aa', '#ffd23f', '#fff']);
+}
+
+// Skulkin skeletons: jump on them or use spinjitzu to smash them. A bump just bounces you back.
+function skelHit(it) {
+  const reach = p.spinning ? 100 : (cfg.truck ? 73 : 32);
+  if (Math.abs(p.x - it.x) > reach || p.y <= GROUND - 70) return;
+  if (p.spinning || (p.vy > 0 && p.y < GROUND - 25)) {
+    it.gone = true; score.studs += 5; p.vy = -520; p.jumps = 1;
+    burst(it.x, GROUND - 35, 26, ['#f4f4f4', '#bbb', '#222']);
+    say('Smash!', it.x, GROUND - 90); jingle([300, 500, 700]);
+  } else if (!p.hurt) {
+    p.hurt = 1; p.vx = (p.x < it.x ? -1 : 1) * 380; p.vy = -380;
+    beep(150, 0.25, 'sawtooth', 0.06); say('Oof!', p.x, p.y - 120);
+  }
+}
+function drawSkeleton(x, y, f, step) {
+  ctx.save(); ctx.translate(x, y); ctx.scale(f, 1);
+  const sw = Math.sin(step) * 5, bone = '#f4f4f4';
+  ctx.fillStyle = bone;
+  ctx.fillRect(-12, -18 + Math.max(0, -sw), 9, 18 - Math.max(0, -sw)); ctx.fillRect(3, -18 + Math.max(0, sw), 9, 18 - Math.max(0, sw));
+  ctx.fillStyle = '#222'; ctx.fillRect(-15, -44, 30, 28);
+  ctx.fillStyle = bone; ctx.fillRect(-11, -40, 22, 4); ctx.fillRect(-11, -32, 22, 4); ctx.fillRect(-11, -24, 22, 4); ctx.fillRect(-2, -44, 4, 28);
+  ctx.fillRect(-22, -42 + sw * 0.4, 7, 22); ctx.fillRect(15, -42 - sw * 0.4, 7, 22);
+  ctx.fillRect(-14, -68, 28, 25);                                   // skull
+  ellipse(-6, -57, 4.5, 5.5, '#111'); ellipse(6, -57, 4.5, 5.5, '#111');
+  ellipse(-6, -56, 1.6, 1.6, '#ff3b3b'); ellipse(6, -56, 1.6, 1.6, '#ff3b3b');
+  ctx.fillStyle = '#111'; ctx.fillRect(-8, -47, 16, 4);
+  ctx.fillStyle = bone; ctx.fillRect(-5, -47, 2, 4); ctx.fillRect(0, -47, 2, 4); ctx.fillRect(5, -47, 2, 4);
+  ctx.restore();
 }
 
 // Simple blocky-cute creatures, drawn around the origin, feet at y=20, facing right.
@@ -455,6 +510,48 @@ function drawCreature(id) {
     ctx.fillStyle = '#3fa34d'; ctx.beginPath(); ctx.moveTo(-10, -14); ctx.lineTo(-3, -30); ctx.lineTo(4, -14); ctx.fill();
     ellipse(-7, -10, 3, 2, '#6fd07a');
     eye(8, 4, '#d33'); eye(-1, 4, '#d33'); smile(4, 9);
+  } else if (id === 'jigg') {
+    ellipse(-8, 19, 6, 4, '#e88aa8'); ellipse(8, 19, 6, 4, '#e88aa8');
+    ellipse(0, 4, 17, 17, '#f9b4c9');
+    ctx.fillStyle = '#f9b4c9';
+    ctx.beginPath(); ctx.moveTo(-14, -8); ctx.lineTo(-17, -26); ctx.lineTo(-4, -14); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(14, -8); ctx.lineTo(17, -26); ctx.lineTo(4, -14); ctx.fill();
+    ctx.strokeStyle = '#f9b4c9'; ctx.lineWidth = 5; ctx.beginPath(); ctx.arc(2, -14, 6, 0.5, Math.PI * 2.2); ctx.stroke();
+    ellipse(-6, 0, 5, 6, '#2aa8a0'); ellipse(7, 0, 5, 6, '#2aa8a0');
+    ellipse(-6, 1, 3, 4, '#176b66'); ellipse(7, 1, 3, 4, '#176b66');
+    ellipse(-5, -2, 1.5, 1.5, '#fff'); ellipse(8, -2, 1.5, 1.5, '#fff');
+    ellipse(1, 10, 3.5, 2.5, '#e0607e');
+  } else if (id === 'psy') {
+    ellipse(-5, 19, 6, 4, '#e8b923'); ellipse(8, 19, 6, 4, '#e8b923');
+    ellipse(0, 8, 15, 13, '#ffd23f'); ellipse(3, 11, 8, 7, '#f6e9a8'); ellipse(-14, 8, 4, 5, '#ffd23f');
+    ellipse(2, -9, 13, 12, '#ffd23f');
+    ctx.strokeStyle = '#222'; ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.moveTo(0, -20); ctx.lineTo(-2, -27); ctx.moveTo(3, -21); ctx.lineTo(6, -27); ctx.moveTo(6, -19); ctx.lineTo(11, -24); ctx.stroke();
+    ellipse(15, -4, 9, 5, '#f6e9a8'); ellipse(12, -5, 1.5, 1.5, '#b49b3a');
+    ellipse(-2, -12, 4, 5, '#fff'); ellipse(9, -12, 4, 5, '#fff');
+    ellipse(-1, -11, 1.6, 1.6, '#222'); ellipse(10, -11, 1.6, 1.6, '#222');
+  } else if (id === 'meow') {
+    ctx.strokeStyle = '#f6e2b8'; ctx.lineWidth = 6; ctx.beginPath(); ctx.moveTo(-12, 12); ctx.quadraticCurveTo(-34, 14, -28, -12); ctx.stroke();
+    ctx.fillStyle = '#b57b45';
+    ctx.beginPath(); ctx.moveTo(-13, -10); ctx.lineTo(-17, -30); ctx.lineTo(-3, -17); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(13, -10); ctx.lineTo(17, -30); ctx.lineTo(3, -17); ctx.fill();
+    ellipse(-6, 19, 6, 4, '#d9c18c'); ellipse(6, 19, 6, 4, '#d9c18c');
+    ellipse(0, 8, 13, 12, '#f6e2b8'); ellipse(0, -6, 15, 12, '#f6e2b8');
+    ellipse(0, -17, 3, 4.5, '#ffd23f');
+    ctx.strokeStyle = '#555'; ctx.lineWidth = 1.2;
+    ctx.beginPath(); ctx.moveTo(-9, -1); ctx.lineTo(-21, -3); ctx.moveTo(-9, 2); ctx.lineTo(-21, 4); ctx.moveTo(9, -1); ctx.lineTo(21, -3); ctx.moveTo(9, 2); ctx.lineTo(21, 4); ctx.stroke();
+    eye(-5, -7); eye(6, -7); ellipse(0, -2, 2, 1.5, '#222'); smile(0, -1);
+  } else if (id === 'mew2') {
+    ellipse(0, -6, 36, 44, `rgba(190,130,255,${0.25 + Math.sin(t * 4) * 0.1})`);   // glowing aura
+    ctx.strokeStyle = '#a66fc4'; ctx.lineWidth = 8; ctx.beginPath(); ctx.moveTo(-8, 16); ctx.quadraticCurveTo(-36, 22, -30, -10); ctx.stroke();
+    ellipse(-6, 19, 6, 4, '#c9bfe0'); ellipse(6, 19, 6, 4, '#c9bfe0');
+    ellipse(0, 6, 12, 15, '#d5cce6'); ellipse(0, 9, 6, 8, '#a66fc4');
+    ctx.fillStyle = '#d5cce6';
+    ctx.beginPath(); ctx.moveTo(-8, -20); ctx.lineTo(-10, -36); ctx.lineTo(-2, -24); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(8, -20); ctx.lineTo(10, -36); ctx.lineTo(2, -24); ctx.fill();
+    ellipse(0, -14, 11, 11, '#d5cce6');
+    ellipse(-4, -14, 3.2, 2, '#7a3fa0'); ellipse(5, -14, 3.2, 2, '#7a3fa0');
+    ctx.strokeStyle = '#a66fc4'; ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(-10, -6); ctx.lineTo(-14, 6); ctx.stroke();
   } else {  // eevee
     ctx.fillStyle = '#b57b45'; ctx.beginPath(); ctx.ellipse(-24, 2, 9, 16, 0.4, 0, Math.PI * 2); ctx.fill();
     ellipse(-28, -10, 7, 6, '#f6e2b8');
@@ -474,7 +571,7 @@ function drawCreature(id) {
 
 function drawHUD() {
   ctx.fillStyle = 'rgba(0,0,0,0.35)';
-  const sx = quizOn() ? 205 : 120, slot = 92;
+  const sx = quizOn() ? 190 : 110, slot = 78;
   ctx.beginPath(); ctx.roundRect(14, 12, sx + POKE.length * slot + 4, 52, 14); ctx.fill();
   ctx.font = FONT; ctx.textBaseline = 'middle'; ctx.fillStyle = '#fff';
   drawItem({ k: 'stud', x: cam + 40, y: 40 }); ctx.fillText(score.studs, 58, 40);
@@ -506,7 +603,9 @@ function drawPlay() {
   drawBackground();
   platforms.forEach(drawPlatform);
   items.forEach(drawItem);
+  if (p.hurt > 0 && Math.floor(t * 14) % 2) ctx.globalAlpha = 0.4;      // blink after a bump
   drawPlayer();
+  ctx.globalAlpha = 1;
   for (const q of parts) { ctx.globalAlpha = Math.min(1, q.life * 2); ctx.fillStyle = q.color; ctx.fillRect(q.x - cam, q.y, q.size, q.size); }
   ctx.globalAlpha = 1;
   ctx.textAlign = 'center'; ctx.font = 'bold 40px "Arial Rounded MT Bold", Arial';
@@ -545,6 +644,10 @@ function drawMenu() {
       : (cfg[b.id] ? '✓ ' : '✗ ') + b.label;
     ctx.fillText((touchMode ? '' : (i + 1) + ': ') + txt, b.x + BW / 2, 507);
   });
+  ctx.fillStyle = voice.size ? '#2fbf4f' : '#e63946';                  // record-my-voice button
+  ctx.beginPath(); ctx.roundRect(W - 230, 14, 216, 42, 14); ctx.fill();
+  ctx.fillStyle = '#fff'; ctx.font = 'bold 20px Arial';
+  ctx.fillText((touchMode ? '' : 'V: ') + '🎤 Record my voice', W - 122, 36);
   ctx.textAlign = 'left';
 }
 
@@ -562,18 +665,24 @@ function makeQuestion(cat) {
   const lv = cfg.level;
   if (cat === 'count') {
     const max = [5, 10, 15][lv], n = 1 + rnd(max);
-    return { cat, title: 'Count the studs!', say: 'How many studs are there?', vis: { type: 'studs', n },
+    return { cat, title: 'Count the studs!', say: 'How many studs are there?', clips: ['q_count'], vis: { type: 'studs', n },
       prompt: 'How many studs?', ...pickOptions(n, () => Math.max(1, n + rnd(5) - 2)) };
   }
   if (cat === 'add') {
     const max = [5, 10, 20][lv], sum = 2 + rnd(max - 1);
     const lo = Math.max(1, sum - 10), hi = Math.min(10, sum - 1), a = lo + rnd(hi - lo + 1), b = sum - a;
-    return { cat, title: 'Brick math!', say: `What is ${a} plus ${b}?`, vis: { type: 'add', a, b },
+    return { cat, title: 'Brick math!', say: `What is ${a} plus ${b}?`, clips: ['what_is', 'n' + a, 'plus', 'n' + b], vis: { type: 'add', a, b },
       prompt: '', ...pickOptions(sum, () => Math.max(1, sum + rnd(5) - 2)) };
+  }
+  if (Math.random() < 0.4) {                       // "Who is it?" - read the Pokémon's name
+    const kd = POKE[rnd(POKE.length)];
+    return { cat, title: 'Who is it?', say: 'Which Pokémon is this?', clips: ['q_poke'], vis: { type: 'poke', id: kd.id },
+      prompt: 'Which Pokémon is this?', ...pickOptions(kd.name, () => POKE[rnd(POKE.length)].name) };
   }
   const word = WORDS[rnd(WORDS.length)], atEnd = lv === 2 && Math.random() < 0.5;
   const correct = atEnd ? word[word.length - 1] : word[0];
   return { cat, title: 'Letter time!', say: `Which letter does ${word.toLowerCase()} ${atEnd ? 'end' : 'start'} with?`,
+    clips: ['which_letter', 'w_' + word, atEnd ? 'ends' : 'starts'],
     vis: { type: 'word', word }, prompt: `Which letter does it ${atEnd ? 'END' : 'START'} with?`,
     ...pickOptions(correct, () => String.fromCharCode(65 + rnd(26))) };
 }
@@ -583,7 +692,7 @@ function startQuiz() {
   quiz = Object.assign(makeQuestion(bag[rnd(bag.length)]), { sel: 0, wrong: [], done: false, doneT: 0, shake: 0 });
   state = 'quiz';
   ptrs.clear(); jumpHeld = false; keys.ArrowLeft = keys.ArrowRight = keys.ArrowDown = false;
-  speak(quiz.say);
+  speakClips(quiz.clips, quiz.say);
 }
 function quizKey(k) {
   if (!quiz || quiz.done) return;
@@ -591,17 +700,17 @@ function quizKey(k) {
   else if (k === 'ArrowRight' || k === 'd') quiz.sel = (quiz.sel + 1) % 3;
   else if (k === '1' || k === '2' || k === '3') answerQuiz(+k - 1);
   else if (k === ' ' || k === 'Enter') answerQuiz(quiz.sel);
-  else if (k === 'r') speak(quiz.say);
+  else if (k === 'r') speakClips(quiz.clips, quiz.say);
 }
 function answerQuiz(i) {
   if (quiz.wrong.includes(i)) return;
   if (i === quiz.answer) {
     quiz.done = true; quiz.doneT = 1.2; quiz.sel = i;
     score.stars++; score.studs += 3;
-    jingle([660, 880, 1100, 1320]); speak(['Great job!', 'You got it!', 'Awesome!', 'Super ninja!'][rnd(4)]);
+    jingle([660, 880, 1100, 1320]); const g = rnd(4); speakClips(['good' + g], GOOD[g]);
   } else {
     quiz.wrong.push(i); quiz.shake = 0.4; misses[quiz.cat]++;
-    beep(200, 0.25, 'sawtooth', 0.05); speak('Try again!');
+    beep(200, 0.25, 'sawtooth', 0.05); speakClips(['again'], 'Try again!');
   }
 }
 function quizTick(dt) {
@@ -613,6 +722,175 @@ function quizTick(dt) {
     say('+3 studs!', p.x, p.y - 100);
   }
 }
+// ---------- your voice ----------
+// Recordings are saved in this browser (IndexedDB) and played in place of the computer voice.
+// Sentences are stitched together from short clips; if any clip is missing, the computer voice is used instead.
+const GOOD = ['Great job!', 'You got it!', 'Awesome!', 'Super ninja!'];
+const NUMW = ['', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten'];
+const CLIPS = [
+  { id: 'q_count', text: 'How many studs are there?' }, { id: 'q_poke', text: 'Which Pokémon is this?' },
+  { id: 'what_is', text: 'What is' }, { id: 'plus', text: 'plus' },
+  ...NUMW.slice(1).map((w, i) => ({ id: 'n' + (i + 1), text: w, show: String(i + 1) })),
+  { id: 'which_letter', text: 'Which letter does' }, { id: 'starts', text: 'start with?' }, { id: 'ends', text: 'end with?' },
+  ...WORDS.map(w => ({ id: 'w_' + w, text: w.toLowerCase(), show: w })),
+  ...GOOD.map((g, i) => ({ id: 'good' + i, text: g })),
+  { id: 'again', text: 'Try again!' },
+];
+const voice = new Map();                          // clip id -> AudioBuffer
+let voiceSrcs = [];
+function getAC() {
+  ac = ac || new (window.AudioContext || window.webkitAudioContext)();
+  if (ac.state === 'suspended') ac.resume();
+  return ac;
+}
+function stopVoice() { voiceSrcs.forEach(s => { try { s.stop(); } catch (e) {} }); voiceSrcs = []; }
+function speakClips(ids, text) {
+  stopVoice();
+  try {
+    if (cfg.voice && ids.every(id => voice.has(id))) {
+      try { speechSynthesis.cancel(); } catch (e) {}
+      const a = getAC(); let when = a.currentTime + 0.05;
+      for (const id of ids) {
+        const b = voice.get(id), s = a.createBufferSource();
+        s.buffer = b; s.connect(a.destination); s.start(when); voiceSrcs.push(s);
+        when += b.duration + 0.04;
+      }
+      return;
+    }
+  } catch (e) {}
+  speak(text);
+}
+function trimBuffer(a, buf) {                       // cut silence from both ends so sentences flow
+  const d = buf.getChannelData(0), th = 0.02;
+  let s = 0, e = d.length - 1;
+  while (s < e && Math.abs(d[s]) < th) s++;
+  while (e > s && Math.abs(d[e]) < th) e--;
+  if (e - s < 200) return buf;
+  s = Math.max(0, s - Math.floor(buf.sampleRate * 0.03)); e = Math.min(d.length - 1, e + Math.floor(buf.sampleRate * 0.06));
+  const out = a.createBuffer(1, e - s + 1, buf.sampleRate); out.copyToChannel(d.slice(s, e + 1), 0);
+  return out;
+}
+const decodeBlob = async blob => {
+  const a = getAC(), buf = await blob.arrayBuffer();
+  return trimBuffer(a, await new Promise((res, rej) => a.decodeAudioData(buf.slice(0), res, rej)));
+};
+let idbDb = null;
+function idbOpen() {
+  return new Promise(res => {
+    try {
+      const r = indexedDB.open('nbr_voice', 1);
+      r.onupgradeneeded = () => r.result.createObjectStore('clips');
+      r.onsuccess = () => res(r.result); r.onerror = () => res(null);
+    } catch (e) { res(null); }
+  });
+}
+async function idbPut(id, blob) {
+  idbDb = idbDb || await idbOpen(); if (!idbDb) return;
+  return new Promise(res => { const tx = idbDb.transaction('clips', 'readwrite'); tx.objectStore('clips').put(blob, id); tx.oncomplete = tx.onerror = () => res(); });
+}
+async function idbAll() {
+  idbDb = idbDb || await idbOpen(); if (!idbDb) return [];
+  return new Promise(res => {
+    const out = [], rq = idbDb.transaction('clips').objectStore('clips').openCursor();
+    rq.onsuccess = e => { const c = e.target.result; if (c) { out.push([c.key, c.value]); c.continue(); } else res(out); };
+    rq.onerror = () => res(out);
+  });
+}
+async function loadVoices() {
+  try { for (const [id, blob] of await idbAll()) { try { voice.set(id, await decodeBlob(blob)); } catch (e) {} } } catch (e) {}
+}
+
+// recorder screen
+let rec = { i: 0, mode: 'idle', msg: '', stream: null, mr: null, timer: 0, flash: 0, t: 0 };
+const RB = [
+  { id: 'back', x: 140, y: 335, w: 150, h: 85, label: '◀ Back' },
+  { id: 'rec', x: 310, y: 335, w: 240, h: 85 },
+  { id: 'play', x: 570, y: 335, w: 120, h: 85, label: '▶ Hear' },
+  { id: 'next', x: 710, y: 335, w: 110, h: 85, label: 'Next ▶' },
+  { id: 'voice', x: 140, y: 436, w: 330, h: 40 },
+  { id: 'done', x: 530, y: 436, w: 290, h: 40, label: 'Finish ✓' },
+];
+function openRecorder() {
+  rec.i = Math.max(0, CLIPS.findIndex(c => !voice.has(c.id))); rec.mode = 'idle'; rec.msg = ''; rec.flash = 0;
+  state = 'record';
+}
+function leaveRecorder() {
+  recStop(); if (rec.stream) { rec.stream.getTracks().forEach(tr => tr.stop()); rec.stream = null; }
+  state = 'menu';
+}
+async function recStart() {
+  if (rec.mode === 'rec' || rec.flash > 0) return;
+  try {
+    if (!rec.stream) rec.stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    const chunks = [], mr = new MediaRecorder(rec.stream), idx = rec.i;
+    rec.mr = mr;
+    mr.ondataavailable = e => { if (e.data && e.data.size) chunks.push(e.data); };
+    mr.onstop = async () => {
+      clearTimeout(rec.timer);
+      try {
+        const blob = new Blob(chunks, { type: mr.mimeType || 'audio/mp4' });
+        voice.set(CLIPS[idx].id, await decodeBlob(blob));
+        idbPut(CLIPS[idx].id, blob);
+        rec.mode = 'saved'; rec.flash = 0.8;
+        speakClips([CLIPS[idx].id], CLIPS[idx].text);
+      } catch (e) { rec.mode = 'err'; rec.msg = "That didn't record. Try again."; }
+    };
+    mr.start(); rec.mode = 'rec'; rec.t = 0; rec.timer = setTimeout(recStop, 5000);
+  } catch (e) { rec.mode = 'err'; rec.msg = 'Microphone is blocked. Allow it in settings.'; }
+}
+function recStop() { if (rec.mode === 'rec' && rec.mr && rec.mr.state === 'recording') rec.mr.stop(); }
+function recGo(d) { if (rec.mode === 'rec') return; rec.i = Math.max(0, Math.min(CLIPS.length - 1, rec.i + d)); rec.mode = 'idle'; rec.msg = ''; rec.flash = 0; }
+function recAction(id) {
+  if (id === 'rec') { rec.mode === 'rec' ? recStop() : recStart(); }
+  else if (id === 'back') recGo(-1);
+  else if (id === 'next') recGo(1);
+  else if (id === 'play') speakClips([CLIPS[rec.i].id], CLIPS[rec.i].text);
+  else if (id === 'voice') { cfg.voice = !cfg.voice; saveCfg(); }
+  else if (id === 'done') leaveRecorder();
+}
+function recordKey(k) {
+  if (k === 'Escape') leaveRecorder();
+  else if (k === ' ' || k === 'Enter' || k === 'r') recAction('rec');
+  else if (k === 'ArrowRight') recAction('next');
+  else if (k === 'ArrowLeft') recAction('back');
+  else if (k === 'p') recAction('play');
+}
+function recTick(dt) {
+  rec.t += dt;
+  if (rec.flash > 0 && (rec.flash -= dt) <= 0) {      // saved: move on to the next line
+    if (rec.i < CLIPS.length - 1) { rec.i++; rec.mode = 'idle'; } else { rec.mode = 'idle'; rec.msg = 'All done! Tap Finish.'; }
+  }
+}
+function drawRecorder() {
+  const c = CLIPS[rec.i], have = voice.has(c.id);
+  drawBackground();
+  ctx.fillStyle = 'rgba(0,0,0,0.55)'; ctx.fillRect(0, 0, W, H);
+  ctx.fillStyle = '#fffdf2'; ctx.beginPath(); ctx.roundRect(100, 24, 760, 492, 28); ctx.fill();
+  ctx.lineWidth = 8; ctx.strokeStyle = '#e63946'; ctx.stroke();
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillStyle = '#222';
+  ctx.font = 'bold 38px "Arial Rounded MT Bold", Arial'; ctx.fillText('🎤 Record your voice', W / 2, 64);
+  ctx.fillStyle = '#666'; ctx.font = 'bold 22px Arial';
+  ctx.fillText(`Line ${rec.i + 1} of ${CLIPS.length}     ✓ ${voice.size} recorded`, W / 2, 104);
+  ctx.fillStyle = '#222'; let fs = 64; const big = c.show || c.text;
+  ctx.font = `bold ${fs}px Arial`;
+  while (ctx.measureText(big).width > 680 && fs > 24) { fs -= 4; ctx.font = `bold ${fs}px Arial`; }
+  ctx.fillText(big, W / 2, 190);
+  if (c.show && c.show !== c.text.toUpperCase()) { ctx.fillStyle = '#888'; ctx.font = 'bold 26px Arial'; ctx.fillText(`say "${c.text}"`, W / 2, 245); }
+  ctx.font = 'bold 26px Arial';
+  if (rec.mode === 'rec') { ctx.fillStyle = '#e63946'; ctx.globalAlpha = 0.6 + Math.sin(rec.t * 8) * 0.4; ctx.fillText('● Recording… tap Stop when done', W / 2, 300); ctx.globalAlpha = 1; }
+  else if (rec.mode === 'saved') { ctx.fillStyle = '#2fbf4f'; ctx.fillText('✓ Saved!', W / 2, 300); }
+  else if (rec.mode === 'err' || rec.msg) { ctx.fillStyle = rec.mode === 'err' ? '#e63946' : '#2fbf4f'; ctx.fillText(rec.msg, W / 2, 300); }
+  else { ctx.fillStyle = have ? '#2a9d8f' : '#666'; ctx.fillText(have ? '✓ Recorded. Tap Hear, or record again.' : 'Tap Record, say it, then tap Stop.', W / 2, 300); }
+  for (const b of RB) {
+    const label = b.id === 'rec' ? (rec.mode === 'rec' ? '■ Stop' : '● Record') : b.id === 'voice' ? 'Use my voice: ' + (cfg.voice ? 'ON' : 'OFF') : b.label;
+    ctx.fillStyle = b.id === 'rec' ? (rec.mode === 'rec' ? '#555' : '#e63946') : b.id === 'done' ? '#2fbf4f' : b.id === 'voice' ? (cfg.voice ? '#2a9d8f' : '#999') : '#4361ee';
+    ctx.beginPath(); ctx.roundRect(b.x, b.y, b.w, b.h, 20); ctx.fill();
+    ctx.fillStyle = '#fff'; ctx.font = `bold ${b.h > 50 ? 30 : 22}px Arial`; ctx.fillText(label, b.x + b.w / 2, b.y + b.h / 2 + 2);
+  }
+  if (!touchMode) { ctx.fillStyle = '#888'; ctx.font = '18px Arial'; ctx.fillText('Space = record / stop     ← → = back / next     P = hear', W / 2, 496); }
+  ctx.textAlign = 'left';
+}
+
 function bigStud(x, y, s, c = '#ffd23f', d = '#c99a12') {
   ellipse(x, y + s * 0.3, s / 2, s * 0.25, d);
   ctx.fillStyle = d; ctx.fillRect(x - s / 2, y, s, s * 0.3);
@@ -640,6 +918,8 @@ function drawQuiz() {
     ctx.fillText(`${v.a} + ${v.b} = ?`, W / 2, 150);
     for (let i = 0; i < v.a; i++) bigStud(W / 2 - 190 + (i % 5 - 2) * 34, 215 + Math.floor(i / 5) * 32, 26);
     for (let i = 0; i < v.b; i++) bigStud(W / 2 + 190 + (i % 5 - 2) * 34, 215 + Math.floor(i / 5) * 32, 26, '#ee4b4b', '#a82a2a');
+  } else if (v.type === 'poke') {
+    ctx.save(); ctx.translate(W / 2, 190); ctx.scale(1.9, 1.9); drawCreature(v.id); ctx.restore();
   } else {
     const n = v.word.length;
     for (let i = 0; i < n; i++) {
@@ -657,7 +937,10 @@ function drawQuiz() {
     ctx.fillStyle = good ? '#2fbf4f' : wrong ? '#b5b5b5' : QCOL[i];
     ctx.beginPath(); ctx.roundRect(b.x + dx, b.y, b.w, b.h, 22); ctx.fill();
     if (i === q.sel && !q.done && !wrong) { ctx.lineWidth = 8; ctx.strokeStyle = '#222'; ctx.stroke(); }
-    ctx.fillStyle = '#fff'; ctx.font = 'bold 76px Arial'; ctx.fillText(o, b.x + b.w / 2 + dx, b.y + b.h / 2 + 4);
+    ctx.fillStyle = '#fff';
+    let fs = 76; ctx.font = 'bold 76px Arial';
+    while (ctx.measureText(o).width > b.w - 16 && fs > 20) { fs -= 4; ctx.font = `bold ${fs}px Arial`; }   // long names shrink to fit
+    ctx.fillText(o, b.x + b.w / 2 + dx, b.y + b.h / 2 + 4);
     if (!touchMode) { ctx.font = 'bold 22px Arial'; ctx.fillText(i + 1, b.x + 22, b.y + 24); }
   });
   ctx.fillStyle = '#777'; ctx.font = 'bold 20px Arial';
@@ -667,11 +950,13 @@ function drawQuiz() {
 
 // ---------- loop ----------
 reset();
+loadVoices();
 let last = performance.now();
 function frame(now) {
   const dt = Math.min(0.033, (now - last) / 1000); last = now;
   ctx.clearRect(0, 0, W, H);
   if (state === 'menu') { t += dt; drawMenu(); }
+  else if (state === 'record') { t += dt; cam = t * 60; recTick(dt); drawRecorder(); }
   else if (state === 'quiz') { t += dt; quizTick(dt); drawPlay(); if (quiz) drawQuiz(); }
   else { update(dt); drawPlay(); }
   requestAnimationFrame(frame);
